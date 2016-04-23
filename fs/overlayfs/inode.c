@@ -219,7 +219,12 @@ out:
 ssize_t ovl_getxattr(struct dentry *dentry, struct inode *inode,
 		     const char *name, void *value, size_t size)
 {
-	struct dentry *realdentry = ovl_dentry_real(dentry);
+	struct dentry *realdentry;
+
+	if (!dentry)
+		return -ECHILD;
+
+	realdentry = ovl_dentry_real(dentry);
 
 	if (ovl_is_private_xattr(name))
 		return -ENODATA;

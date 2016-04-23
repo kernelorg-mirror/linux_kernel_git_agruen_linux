@@ -697,7 +697,7 @@ generic_getxattr(struct dentry *dentry, struct inode *inode,
 {
 	const struct xattr_handler *handler;
 
-	handler = xattr_resolve_name(dentry->d_sb->s_xattr, &name);
+	handler = xattr_resolve_name(inode->i_sb->s_xattr, &name);
 	if (IS_ERR(handler))
 		return PTR_ERR(handler);
 	return handler->get(handler, dentry, inode,
