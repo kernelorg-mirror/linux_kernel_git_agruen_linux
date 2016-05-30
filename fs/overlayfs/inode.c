@@ -219,15 +219,16 @@ out:
 ssize_t ovl_getxattr(struct dentry *dentry, struct inode *inode,
 		     const char *name, void *value, size_t size)
 {
+	struct ovl_entry *oe = inode->i_private;
 	struct dentry *realdentry;
-
-	if (!dentry)
-		return -ECHILD;
-
-	realdentry = ovl_dentry_real(dentry);
+	bool is_upper;
 
 	if (ovl_is_private_xattr(name))
 		return -ENODATA;
+
+	realdentry = ovl_entry_real(oe, &is_upper);
+	if (WARN_ON(!realdentry->d_inode))
+		return -ENOENT;
 
 	return vfs_getxattr(realdentry, name, value, size);
 }
