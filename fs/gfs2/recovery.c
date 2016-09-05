@@ -181,68 +181,20 @@ static int get_log_header(struct gfs2_jdesc *jd, unsigned int blk,
  * Call get_log_header() to get a log header for a segment, but if the
  * segment is bad, scan forward until we find a good one.
  *
- * Returns: errno
+ * Returns: 0 on success,
+ *          1 if the header was invalid or incomplete,
+ *          errno on error
  */
 
 static int find_good_lh(struct gfs2_jdesc *jd, unsigned int *blk,
 			struct gfs2_log_header_host *head)
 {
-	unsigned int orig_blk = *blk;
-	int error;
-
-	for (;;) {
-		error = get_log_header(jd, *blk, head);
+	for (; *blk < jd->jd_blocks; (*blk)++) {
+		int error = get_log_header(jd, *blk, head);
 		if (error <= 0)
 			return error;
-
-		if (++*blk == jd->jd_blocks)
-			*blk = 0;
-
-		if (*blk == orig_blk) {
-			gfs2_consist_inode(GFS2_I(jd->jd_inode));
-			return -EIO;
-		}
 	}
-}
-
-/**
- * jhead_scan - make sure we've found the head of the log
- * @jd: the journal
- * @head: this is filled in with the log descriptor of the head
- *
- * At this point, seg and lh should be either the head of the log or just
- * before.  Scan forward until we find the head.
- *
- * Returns: errno
- */
-
-static int jhead_scan(struct gfs2_jdesc *jd, struct gfs2_log_header_host *head)
-{
-	unsigned int blk = head->lh_blkno;
-	struct gfs2_log_header_host lh;
-	int error;
-
-	for (;;) {
-		if (++blk == jd->jd_blocks)
-			blk = 0;
-
-		error = get_log_header(jd, blk, &lh);
-		if (error < 0)
-			return error;
-		if (error == 1)
-			continue;
-
-		if (lh.lh_sequence == head->lh_sequence) {
-			gfs2_consist_inode(GFS2_I(jd->jd_inode));
-			return -EIO;
-		}
-		if (lh.lh_sequence < head->lh_sequence)
-			break;
-
-		*head = lh;
-	}
-
-	return 0;
+	return 1;
 }
 
 /**
@@ -250,8 +202,8 @@ static int jhead_scan(struct gfs2_jdesc *jd, struct gfs2_log_header_host *head)
  * @jd: the journal
  * @head: the log descriptor for the head of the log is returned here
  *
- * Do a binary search of a journal and find the valid log entry with the
- * highest sequence number.  (i.e. the log head)
+ * Do a search of a journal and find the valid log entry with the highest
+ * sequence number.  (i.e. the log head)
  *
  * Returns: errno
  */
@@ -259,44 +211,36 @@ static int jhead_scan(struct gfs2_jdesc *jd, struct gfs2_log_header_host *head)
 int gfs2_find_jhead(struct gfs2_jdesc *jd, struct gfs2_log_header_host *head)
 {
 	struct gfs2_sbd *sdp = GFS2_SB(jd->jd_inode);
-	struct gfs2_log_header_host lh_1, lh_m;
-	u32 blk_1, blk_2, blk_m;
+	u32 blk = 0;
 	int error;
 
 	error = gfs2_map_journal_extents(sdp, jd);
 	if (error)
 		return error;
 
-	blk_1 = 0;
-	blk_2 = jd->jd_blocks - 1;
-
-	for (;;) {
-		blk_m = (blk_1 + blk_2) / 2;
-
-		error = find_good_lh(jd, &blk_1, &lh_1);
-		if (error)
-			return error;
-
-		error = find_good_lh(jd, &blk_m, &lh_m);
-		if (error)
-			return error;
-
-		if (blk_1 == blk_m || blk_m == blk_2)
-			break;
-
-		if (lh_1.lh_sequence <= lh_m.lh_sequence)
-			blk_1 = blk_m;
-		else
-			blk_2 = blk_m;
-	}
-
-	error = jhead_scan(jd, &lh_1);
+	error = find_good_lh(jd, &blk, head);
+	if (error == 1)
+		goto out_inconsistent;
 	if (error)
 		return error;
+	for (blk++; blk < jd->jd_blocks; blk++) {
+		struct gfs2_log_header_host lh;
 
-	*head = lh_1;
-
+		error = find_good_lh(jd, &blk, &lh);
+		if (error == 1)
+			return 0;
+		if (error)
+			return error;
+		if (head->lh_sequence == lh.lh_sequence)
+			goto out_inconsistent;
+		if (head->lh_sequence < lh.lh_sequence)
+			*head = lh;
+	}
 	return error;
+
+out_inconsistent:
+	gfs2_consist_inode(GFS2_I(jd->jd_inode));
+	return -EIO;
 }
 
 /**
