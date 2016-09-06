@@ -187,7 +187,7 @@ struct buffer_head *gfs2_meta_new(struct gfs2_glock *gl, u64 blkno)
 	return bh;
 }
 
-static void gfs2_meta_read_endio(struct bio *bio)
+void gfs2_meta_read_endio(struct bio *bio)
 {
 	struct bio_vec *bvec;
 	int i;

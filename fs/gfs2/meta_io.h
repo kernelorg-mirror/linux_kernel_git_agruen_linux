@@ -52,6 +52,7 @@ static inline struct gfs2_sbd *gfs2_mapping2sbd(struct address_space *mapping)
 }
 
 extern struct buffer_head *gfs2_meta_new(struct gfs2_glock *gl, u64 blkno);
+extern void gfs2_meta_read_endio(struct bio *bio);
 extern int gfs2_meta_read(struct gfs2_glock *gl, u64 blkno, int flags,
 			  int rahead, struct buffer_head **bhp);
 extern int gfs2_meta_wait(struct gfs2_sbd *sdp, struct buffer_head *bh);

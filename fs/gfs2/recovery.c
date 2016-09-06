@@ -14,6 +14,7 @@
 #include <linux/buffer_head.h>
 #include <linux/gfs2_ondisk.h>
 #include <linux/crc32.h>
+#include <linux/bio.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -30,10 +31,12 @@
 struct workqueue_struct *gfs_recovery_wq;
 
 int gfs2_replay_read_block(struct gfs2_jdesc *jd, unsigned int blk,
-			   struct buffer_head **bh)
+			   struct buffer_head **first_bh)
 {
 	struct gfs2_inode *ip = GFS2_I(jd->jd_inode);
 	struct gfs2_glock *gl = ip->i_gl;
+	struct bio *bio;
+	struct buffer_head *bh;
 	u64 dblock;
 	u32 extlen;
 	int error;
@@ -44,9 +47,40 @@ int gfs2_replay_read_block(struct gfs2_jdesc *jd, unsigned int blk,
 		return error;
 	}
 
-	*bh = gfs2_meta_ra(gl, dblock, extlen);
+	*first_bh = bh = gfs2_getbuf(gl, dblock, CREATE);
+	lock_buffer(bh);
+	if (buffer_uptodate(bh)) {
+		unlock_buffer(bh);
+		return 0;
+	}
+	get_bh(bh);
 
-	return error;
+	bio = bio_alloc(GFP_NOIO, min((int)extlen, BIO_MAX_PAGES));
+	bio->bi_iter.bi_sector = bh->b_blocknr * (bh->b_size >> 9);
+	bio->bi_bdev = bh->b_bdev;
+	bio->bi_end_io = gfs2_meta_read_endio;
+	bio_set_op_attrs(bio, REQ_OP_READ, READ_SYNC | REQ_META | REQ_PRIO);
+
+	for (;;) {
+		bh->b_end_io = end_buffer_read_sync;
+		if (!bio_add_page(bio, bh->b_page, bh->b_size, bh_offset(bh)))
+			break;
+		extlen--;
+		if (!extlen)
+			goto submit;
+		dblock++;
+		bh = gfs2_getbuf(gl, dblock, CREATE);
+		lock_buffer(bh);
+		if (buffer_uptodate(bh))
+			break;
+	}
+	unlock_buffer(bh);
+	brelse(bh);
+
+submit:
+	submit_bio(bio);
+	wait_on_buffer(*first_bh);
+	return 0;
 }
 
 int gfs2_revoke_add(struct gfs2_jdesc *jd, u64 blkno, unsigned int where)
