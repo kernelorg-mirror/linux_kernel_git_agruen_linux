@@ -56,6 +56,7 @@ extern void gfs2_meta_read_endio(struct bio *bio);
 extern int gfs2_meta_read(struct gfs2_glock *gl, u64 blkno, int flags,
 			  int rahead, struct buffer_head **bhp);
 extern int gfs2_meta_wait(struct gfs2_sbd *sdp, struct buffer_head *bh);
+extern int gfs2_readahead_extent(struct gfs2_inode *ip, unsigned int *blk);
 extern struct buffer_head *gfs2_getbuf(struct gfs2_glock *gl, u64 blkno,
 				       int create);
 enum {

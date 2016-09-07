@@ -27,6 +27,7 @@
 #include "inode.h"
 #include "log.h"
 #include "lops.h"
+#include "bmap.h"
 #include "meta_io.h"
 #include "rgrp.h"
 #include "trans.h"
@@ -323,6 +324,66 @@ int gfs2_meta_wait(struct gfs2_sbd *sdp, struct buffer_head *bh)
 	}
 	if (unlikely(test_bit(SDF_SHUTDOWN, &sdp->sd_flags)))
 		return -EIO;
+
+	return 0;
+}
+
+int gfs2_readahead_extent(struct gfs2_inode *ip, unsigned int *blk)
+{
+	struct gfs2_glock *gl = ip->i_gl;
+	struct bio *bio = NULL;
+	struct buffer_head *bh = NULL;
+	int new = 0;
+	u64 dblock;
+	u32 extlen;
+	int error;
+
+	error = gfs2_extent_map(&ip->i_inode, *blk, &new, &dblock, &extlen);
+	if (error)
+		return error;
+	if (!dblock) {
+		gfs2_consist_inode(ip);
+		return -EIO;
+	}
+
+	while (extlen) {
+		if (!bh) {
+			bh = gfs2_getbuf(gl, dblock, CREATE);
+			if (buffer_uptodate(bh) || !trylock_buffer(bh)) {
+				brelse(bh);
+				if (bio) {
+					submit_bio(bio);
+					bio = NULL;
+				}
+				goto next_bh;
+			}
+			bh->b_end_io = end_buffer_read_sync;
+		}
+
+		if (!bio) {
+			bio = bio_alloc(GFP_NOIO, min((int)extlen, BIO_MAX_PAGES));
+			bio->bi_iter.bi_sector = bh->b_blocknr * (bh->b_size >> 9);
+			bio->bi_bdev = bh->b_bdev;
+			bio->bi_end_io = gfs2_meta_read_endio;
+			bio_set_op_attrs(bio, REQ_OP_READ, REQ_RAHEAD | REQ_META);
+		}
+
+		if (bio_add_page(bio, bh->b_page, bh->b_size, bh_offset(bh)))
+			goto next_bh;
+
+		submit_bio(bio);
+		bio = NULL;
+		continue;
+
+next_bh:
+		bh = NULL;
+		(*blk)++;
+		dblock++;
+		extlen--;
+	}
+
+	if (bio)
+		submit_bio(bio);
 
 	return 0;
 }

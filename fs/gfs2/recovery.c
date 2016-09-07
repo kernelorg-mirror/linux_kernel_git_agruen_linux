@@ -83,6 +83,19 @@ submit:
 	return 0;
 }
 
+static int gfs2_readahead_journal(struct gfs2_jdesc *jd)
+{
+	struct gfs2_inode *ip = GFS2_I(jd->jd_inode);
+	unsigned int blk = 0;
+
+	while (blk < jd->jd_blocks) {
+		int error = gfs2_readahead_extent(ip, &blk);
+		if (error)
+			return error;
+	}
+	return 0;
+}
+
 int gfs2_revoke_add(struct gfs2_jdesc *jd, u64 blkno, unsigned int where)
 {
 	struct list_head *head = &jd->jd_revoke_list;
@@ -247,6 +260,8 @@ int gfs2_find_jhead(struct gfs2_jdesc *jd, struct gfs2_log_header_host *head)
 	struct gfs2_sbd *sdp = GFS2_SB(jd->jd_inode);
 	u32 blk = 0;
 	int error;
+
+	gfs2_readahead_journal(jd);
 
 	error = gfs2_map_journal_extents(sdp, jd);
 	if (error)
