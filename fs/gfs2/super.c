@@ -423,11 +423,11 @@ int gfs2_make_fs_rw(struct gfs2_sbd *sdp)
 	if (error)
 		goto fail_threads;
 
-	j_gl->gl_ops->go_inval(j_gl, DIO_METADATA);
-
 	error = gfs2_find_jhead(sdp->sd_jdesc, &head);
 	if (error)
 		goto fail;
+
+	j_gl->gl_ops->go_inval(j_gl, DIO_METADATA);
 
 	if (!(head.lh_flags & GFS2_LOG_HEAD_UNMOUNT)) {
 		gfs2_consist(sdp);

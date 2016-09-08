@@ -401,7 +401,7 @@ static int clean_journal(struct gfs2_jdesc *jd, struct gfs2_log_header_host *hea
 		return -EIO;
 	}
 
-	bh = sb_getblk(sdp->sd_vfs, bh_map.b_blocknr);
+	bh = gfs2_getbuf(ip->i_gl, bh_map.b_blocknr, CREATE);
 	lock_buffer(bh);
 	memset(bh->b_data, 0, bh->b_size);
 	set_buffer_uptodate(bh);
