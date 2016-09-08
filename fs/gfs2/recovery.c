@@ -179,11 +179,10 @@ static int get_log_header(struct gfs2_jdesc *jd, unsigned int blk,
  * find_good_lh - find a good log header
  * @jd: the journal
  * @blk: the segment to start searching from
- * @lh: the log header to fill in
- * @forward: if true search forward in the log, else search backward
+ * @head: the log header to fill in
  *
  * Call get_log_header() to get a log header for a segment, but if the
- * segment is bad, either scan forward or backward until we find a good one.
+ * segment is bad, scan forward until we find a good one.
  *
  * Returns: errno
  */
