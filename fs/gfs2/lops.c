@@ -21,6 +21,7 @@
 #include "gfs2.h"
 #include "incore.h"
 #include "inode.h"
+#include "bmap.h"
 #include "glock.h"
 #include "log.h"
 #include "lops.h"
@@ -142,19 +143,15 @@ static void gfs2_log_incr_head(struct gfs2_sbd *sdp)
 
 static u64 gfs2_log_bmap(struct gfs2_sbd *sdp)
 {
-	unsigned int lbn = sdp->sd_log_flush_head;
-	struct gfs2_journal_extent *je;
-	u64 block;
+	struct gfs2_jdesc *jd = sdp->sd_jdesc;
+	unsigned int lblock = sdp->sd_log_flush_head;
+	u64 dblock;
+	u32 extlen;
 
-	list_for_each_entry(je, &sdp->sd_jdesc->extent_list, list) {
-		if ((lbn >= je->lblock) && (lbn < (je->lblock + je->blocks))) {
-			block = je->dblock + lbn - je->lblock;
-			gfs2_log_incr_head(sdp);
-			return block;
-		}
-	}
-
-	return -1;
+	if (gfs2_journal_extent_map(jd, lblock, &dblock, &extlen))
+		return -1;
+	gfs2_log_incr_head(sdp);
+	return dblock;
 }
 
 /**

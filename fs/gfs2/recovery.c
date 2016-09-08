@@ -34,17 +34,14 @@ int gfs2_replay_read_block(struct gfs2_jdesc *jd, unsigned int blk,
 {
 	struct gfs2_inode *ip = GFS2_I(jd->jd_inode);
 	struct gfs2_glock *gl = ip->i_gl;
-	int new = 0;
 	u64 dblock;
 	u32 extlen;
 	int error;
 
-	error = gfs2_extent_map(&ip->i_inode, blk, &new, &dblock, &extlen);
-	if (error)
-		return error;
-	if (!dblock) {
+	error = gfs2_journal_extent_map(jd, blk, &dblock, &extlen);
+	if (error) {
 		gfs2_consist_inode(ip);
-		return -EIO;
+		return error;
 	}
 
 	*bh = gfs2_meta_ra(gl, dblock, extlen);
@@ -261,9 +258,14 @@ static int jhead_scan(struct gfs2_jdesc *jd, struct gfs2_log_header_host *head)
 
 int gfs2_find_jhead(struct gfs2_jdesc *jd, struct gfs2_log_header_host *head)
 {
+	struct gfs2_sbd *sdp = GFS2_SB(jd->jd_inode);
 	struct gfs2_log_header_host lh_1, lh_m;
 	u32 blk_1, blk_2, blk_m;
 	int error;
+
+	error = gfs2_map_journal_extents(sdp, jd);
+	if (error)
+		return error;
 
 	blk_1 = 0;
 	blk_2 = jd->jd_blocks - 1;

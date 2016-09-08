@@ -1404,10 +1404,12 @@ int gfs2_map_journal_extents(struct gfs2_sbd *sdp, struct gfs2_jdesc *jd)
 	u64 size;
 	int rc;
 
+	if (!list_empty(&jd->extent_list))
+		return 0;
+
 	lblock_stop = i_size_read(jd->jd_inode) >> shift;
 	size = (lblock_stop - lblock) << shift;
 	jd->nr_extents = 0;
-	WARN_ON(!list_empty(&jd->extent_list));
 
 	do {
 		bh.b_state = 0;
@@ -1437,6 +1439,22 @@ fail:
 		bh.b_state, (unsigned long long)bh.b_size);
 	gfs2_free_journal_extents(jd);
 	return rc;
+}
+
+int gfs2_journal_extent_map(struct gfs2_jdesc *jd, unsigned int lblock,
+			    u64 *dblock, u32 *extlen)
+{
+	struct gfs2_journal_extent *je;
+
+	list_for_each_entry(je, &jd->extent_list, list) {
+		u64 end = je->lblock + je->blocks;
+		if (lblock >= je->lblock && lblock < end) {
+			*dblock = je->dblock + lblock - je->lblock;
+			*extlen = end - lblock;
+			return 0;
+		}
+	}
+	return -EIO;
 }
 
 /**
