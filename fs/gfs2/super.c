@@ -1630,6 +1630,8 @@ out:
 	gfs2_rsqa_delete(ip, NULL);
 	gfs2_ordered_del_inode(ip);
 	clear_inode(inode);
+	error = rhashtable_remove_fast(&gfs2_inodes, &ip->i_inodes, gfs2_inodes_params);
+	WARN_ON_ONCE(error);
 	gfs2_dir_hash_inval(ip);
 	ip->i_gl->gl_object = NULL;
 	flush_delayed_work(&ip->i_gl->gl_work);
@@ -1660,15 +1662,16 @@ static struct inode *gfs2_alloc_inode(struct super_block *sb)
 	return &ip->i_inode;
 }
 
-static void gfs2_i_callback(struct rcu_head *head)
+void __gfs2_destroy_inode(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
+
 	kmem_cache_free(gfs2_inode_cachep, inode);
 }
 
 static void gfs2_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, gfs2_i_callback);
+	call_rcu(&inode->i_rcu, __gfs2_destroy_inode);
 }
 
 const struct super_operations gfs2_super_ops = {

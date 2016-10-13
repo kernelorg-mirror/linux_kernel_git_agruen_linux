@@ -386,6 +386,7 @@ enum {
 
 struct gfs2_inode {
 	struct inode i_inode;
+	struct rhash_head i_inodes;
 	u64 i_no_addr;
 	u64 i_no_formal_ino;
 	u64 i_generation;
@@ -848,6 +849,9 @@ static inline void gfs2_sbstats_inc(const struct gfs2_glock *gl, int which)
 	this_cpu_ptr(sdp->sd_lkstats)->lkstats[gl->gl_name.ln_type].stats[which]++;
 	preempt_enable();
 }
+
+extern struct rhashtable_params gfs2_inodes_params;
+extern struct rhashtable gfs2_inodes;
 
 #endif /* __INCORE_DOT_H__ */
 

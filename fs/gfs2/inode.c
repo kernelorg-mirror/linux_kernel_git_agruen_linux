@@ -12,6 +12,7 @@
 #include <linux/completion.h>
 #include <linux/buffer_head.h>
 #include <linux/namei.h>
+#include <linux/writeback.h>
 #include <linux/mm.h>
 #include <linux/xattr.h>
 #include <linux/posix_acl.h>
@@ -37,35 +38,127 @@
 #include "super.h"
 #include "glops.h"
 
-static int iget_test(struct inode *inode, void *opaque)
-{
-	u64 no_addr = *(u64 *)opaque;
+struct gfs2_inode_hash_key {
+	struct super_block *sb;
+	u64 no_addr;
+};
 
-	return GFS2_I(inode)->i_no_addr == no_addr;
+static u32 gfs2_inode_hashfn(const void *key, u32 len, u32 seed)
+{
+	const struct gfs2_inode_hash_key *k = key;
+
+	BUILD_BUG_ON(sizeof(*k) % sizeof(u32));
+	return jhash2((const u32 *)k, sizeof(*k) / sizeof(u32), seed);
 }
 
-static int iget_set(struct inode *inode, void *opaque)
+static u32 gfs2_inode_obj_hashfn(const void *obj, u32 len, u32 seed)
 {
-	u64 no_addr = *(u64 *)opaque;
+	const struct gfs2_inode *ip = obj;
+	const struct gfs2_inode_hash_key key = {
+		.sb = ip->i_inode.i_sb,
+		.no_addr = ip->i_no_addr,
+	};
 
-	GFS2_I(inode)->i_no_addr = no_addr;
-	inode->i_ino = no_addr;
-	return 0;
+	return gfs2_inode_hashfn(&key, len, seed);
+}
+
+static int gfs2_inode_cmpfn(struct rhashtable_compare_arg *arg, const void *obj)
+{
+	const struct gfs2_inode *ip = obj;
+	const struct gfs2_inode_hash_key *key = arg->key;
+
+	return key->sb == ip->i_inode.i_sb &&
+	       key->no_addr == ip->i_no_addr;
+}
+
+struct rhashtable_params gfs2_inodes_params = {
+	.nelem_hint = 4096 * 3 / 4,
+	.head_offset = offsetof(struct gfs2_inode, i_inodes),
+	.hashfn = gfs2_inode_hashfn,
+	.obj_hashfn = gfs2_inode_obj_hashfn,
+	.obj_cmpfn = gfs2_inode_cmpfn,
+};
+
+struct rhashtable gfs2_inodes;
+
+static void __gfs2_wait_on_freeing_inode(struct inode *inode)
+{
+	DEFINE_WAIT_BIT(wait, &inode->i_state, __I_NEW);
+	wait_queue_head_t *wq;
+
+	wq = bit_waitqueue(&inode->i_state, __I_NEW);
+	prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
+	spin_unlock(&inode->i_lock);
+	schedule();
+	finish_wait(wq, &wait.wait);
+}
+
+static struct inode *gfs2_find_inode(struct super_block *sb, u64 no_addr)
+{
+	struct gfs2_inode_hash_key key = {
+		.sb = sb,
+		.no_addr = no_addr,
+	};
+	struct gfs2_inode *ip;
+
+repeat:
+	rcu_read_lock();
+	ip = rhashtable_lookup_fast(&gfs2_inodes, &key, gfs2_inodes_params);
+	if (ip) {
+		struct inode *inode = &ip->i_inode;
+
+		spin_lock(&inode->i_lock);
+		rcu_read_unlock();
+		if (inode->i_state & (I_FREEING|I_WILL_FREE)) {
+			__gfs2_wait_on_freeing_inode(inode);
+			goto repeat;
+		}
+		__iget(inode);
+		spin_unlock(&inode->i_lock);
+		return inode;
+	}
+	rcu_read_unlock();
+	return NULL;
 }
 
 static struct inode *gfs2_iget(struct super_block *sb, u64 no_addr)
 {
 	struct inode *inode;
 
-repeat:
-	inode = iget5_locked(sb, no_addr, iget_test, iget_set, &no_addr);
-	if (!inode)
+again:
+	inode = gfs2_find_inode(sb, no_addr);
+	if (inode) {
+		wait_on_inode(inode);
+		if (unlikely(inode_unhashed(inode) || is_bad_inode(inode))) {
+			iput(inode);
+			goto again;
+		}
 		return inode;
-	if (is_bad_inode(inode)) {
-		iput(inode);
-		goto repeat;
 	}
-	return inode;
+
+	inode = new_inode(sb);
+	if (inode) {
+		struct gfs2_inode *ip = GFS2_I(inode);
+		int err;
+
+		ip->i_no_addr = no_addr;
+		inode->i_ino = no_addr;
+
+		err = rhashtable_insert_fast(&gfs2_inodes, &ip->i_inodes, gfs2_inodes_params);
+		if (!err) {
+			spin_lock(&inode->i_lock);
+			inode->i_state = I_NEW;
+			/* make the inode look hashed for the writeback code */
+			hlist_add_fake(&inode->i_hash);
+			spin_unlock(&inode->i_lock);
+
+			return inode;
+		}
+		__destroy_inode(inode);
+		__gfs2_destroy_inode(&inode->i_rcu);
+		goto again;
+	}
+	return NULL;
 }
 
 /**
@@ -758,6 +851,10 @@ static int gfs2_create_inode(struct inode *dir, struct dentry *dentry,
 
 	error = link_dinode(dip, name, ip, &da);
 	if (error)
+		goto fail_gunlock3;
+
+	error = rhashtable_insert_fast(&gfs2_inodes, &ip->i_inodes, gfs2_inodes_params);
+	if (WARN_ON_ONCE(error))
 		goto fail_gunlock3;
 
 	mark_inode_dirty(inode);

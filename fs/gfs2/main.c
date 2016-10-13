@@ -46,6 +46,7 @@ static void gfs2_init_inode_once(void *foo)
 	RB_CLEAR_NODE(&ip->i_res.rs_node);
 	ip->i_hash_cache = NULL;
 	gfs2_holder_mark_uninitialized(&ip->i_iopen_gh);
+	ip->i_inodes.next = NULL;  /* FIXME: What for? */
 }
 
 static void gfs2_init_glock_once(void *foo)
@@ -93,6 +94,10 @@ static int __init init_gfs2_fs(void)
 		goto fail_lru;
 
 	error = gfs2_glock_init();
+	if (error)
+		goto fail;
+
+	error = rhashtable_init(&gfs2_inodes, &gfs2_inodes_params);
 	if (error)
 		goto fail;
 
@@ -220,6 +225,9 @@ fail_lru:
 	if (gfs2_glock_cachep)
 		kmem_cache_destroy(gfs2_glock_cachep);
 
+	if (gfs2_inodes.tbl)
+		rhashtable_destroy(&gfs2_inodes);
+
 	gfs2_sys_uninit();
 	return error;
 }
@@ -251,6 +259,7 @@ static void __exit exit_gfs2_fs(void)
 	kmem_cache_destroy(gfs2_inode_cachep);
 	kmem_cache_destroy(gfs2_glock_aspace_cachep);
 	kmem_cache_destroy(gfs2_glock_cachep);
+	rhashtable_destroy(&gfs2_inodes);
 
 	gfs2_sys_uninit();
 }
